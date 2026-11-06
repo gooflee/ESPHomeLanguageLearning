@@ -38,7 +38,7 @@ esp32:
   framework:
     type: esp-idf
     sdkconfig_options:
-      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_80: "y"
       CONFIG_FATFS_LFN_HEAP: "y"
       CONFIG_FATFS_MAX_LFN: "255"
     advanced:
@@ -231,6 +231,7 @@ binary_sensor:
     name: "Sticky AI Button (Toggle Review Mark)"
     pin:
       number: GPIO4
+      allow_other_uses: true
       inverted: true
       mode:
         input: true
@@ -245,6 +246,7 @@ binary_sensor:
     name: "Sticky UP Button (Prev - Double-Click Mode)"
     pin:
       number: GPIO5
+      allow_other_uses: true
       inverted: true
       mode:
         input: true
@@ -272,6 +274,7 @@ binary_sensor:
     name: "Sticky DOWN Button (Next - Double-Click Mark)"
     pin:
       number: GPIO6
+      allow_other_uses: true
       inverted: true
       mode:
         input: true
@@ -299,6 +302,20 @@ interval:
   - interval: 10min
     then:
       - script.execute: action_next_sentence
+
+deep_sleep:
+  id: ds
+  run_duration: 30s        # Stays awake for 30 seconds after waking up/interacting
+  sleep_duration: 30min    # Optional automatic wake timer if no button is pressed
+  esp32_ext1_wakeup:
+    mode: ANY_LOW          # Wake up when any of the selected buttons are pressed (LOW)
+    pins:
+      - number: GPIO4      # AI Button
+        allow_other_uses: true
+      - number: GPIO5      # UP Button
+        allow_other_uses: true
+      - number: GPIO6      # DOWN Button
+        allow_other_uses: true
 
 script:
   - id: feedback_click
