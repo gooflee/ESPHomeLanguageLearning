@@ -1,0 +1,354 @@
+# ============================================================================
+# Korean Sentence Reader (ESPHome — Seeed Studio reTerminal Sticky)
+# 100% Offline • MicroSD Card (/Korean_sentences.txt) • Pure Hangul Vector UI
+# Capacitive Touch (GT911) • Battery Fuel Gauge (BQ27220) • Buzzer Feedback
+# ============================================================================
+
+esphome:
+  name: sticky-korean-reader
+  friendly_name: "Sticky Korean Sentence Reader"
+  includes:
+    - include/default_sentences.h
+    - include/hangul_canvas.h
+    - include/sd_sentences.h
+  on_boot:
+    - priority: 600
+      then:
+        # CRITICAL: Hold power latch pins HIGH immediately on boot or the
+        # Seeed Studio reTerminal Sticky cuts its own battery power rail.
+        - output.turn_on: pwr_hold
+        - output.turn_on: pwr_lock
+        # Enable BQ25616 battery charging and SD card power rail (GPIO10)
+        - output.turn_on: charge_enable
+        - output.turn_on: bsp_sd_enable
+        # Turn on GT911 capacitive touch panel power
+        - switch.turn_on: touch_power_enable
+    - priority: -100
+      then:
+        # Run after SPI, I2C, and ePaper display components have finished setup()
+        - delay: 100ms
+        - lambda: |-
+            sticky_korean::app().init_on_boot(id(i2c_sensor));
+        - component.update: epaper_display
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: ESP32S3
+  flash_size: 32MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_FATFS_LFN_HEAP: "y"
+      CONFIG_FATFS_MAX_LFN: "255"
+    advanced:
+      disable_fatfs: false
+      disable_vfs_support_dir: false
+      include_builtin_idf_components:
+        - fatfs
+        - sdmmc
+        - esp_driver_sdspi
+        - esp_driver_sdmmc
+        - wear_levelling
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# No `wifi:` or `api:` blocks -> Runs 100% offline with zero Wi-Fi dependency.
+# Serial logging uses UART0 (via the onboard CH343P USB-to-UART bridge).
+logger:
+  level: INFO
+  hardware_uart: UART0
+
+# Shared SPI2 Bus (SSD1677 ePaper Display + MicroSD Card Slot)
+# MicroSD CS = GPIO8 is mounted/unmounted dynamically in include/sd_sentences.h
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO14
+  miso_pin:
+    number: GPIO12
+    mode:
+      input: true
+      pullup: true
+
+# Dual I2C Buses on Seeed Studio reTerminal Sticky:
+# - i2c_sensor (SCL=GPIO0, SDA=GPIO1): BQ27220 battery fuel gauge (@0x55), PCF8563 RTC, SHT40, IMU
+# - i2c_touch  (SCL=GPIO2, SDA=GPIO3): GT911 capacitive touch controller (@0x5D)
+i2c:
+  - id: i2c_sensor
+    scl:
+      number: GPIO0
+      ignore_strapping_warning: true
+    sda: GPIO1
+    frequency: 400kHz
+
+  - id: i2c_touch
+    scl: GPIO2
+    sda:
+      number: GPIO3
+      ignore_strapping_warning: true
+    frequency: 100kHz
+
+# Critical Hardware Power, Charger, SD, and Buzzer Outputs
+output:
+  - platform: gpio
+    id: pwr_hold
+    pin:
+      number: GPIO45
+      ignore_strapping_warning: true
+  - platform: gpio
+    id: pwr_lock
+    pin:
+      number: GPIO46
+      ignore_strapping_warning: true
+  # MicroSD card slot power enable (GPIO10, HIGH = power ON)
+  - platform: gpio
+    id: bsp_sd_enable
+    pin: GPIO10
+  # BQ25616 charger enable (GPIO39, active LOW: LOW = charging enabled)
+  - platform: gpio
+    id: charge_enable
+    pin:
+      number: GPIO39
+      inverted: true
+  # Onboard piezo buzzer PWM (GPIO48)
+  - platform: ledc
+    id: buzzer_pwm
+    pin: GPIO48
+    frequency: 2000Hz
+
+switch:
+  # GT911 Capacitive Touch Panel Power Enable (GPIO42)
+  - platform: gpio
+    id: touch_power_enable
+    pin: GPIO42
+    internal: true
+    restore_mode: ALWAYS_ON
+    setup_priority: 1100
+
+light:
+  # Buzzer wrapper for brief tactile click feedback
+  - platform: monochromatic
+    id: buzzer
+    name: "Sticky Buzzer"
+    output: buzzer_pwm
+    default_transition_length: 0s
+
+# BQ27220 Battery Fuel Gauge Sensors (I2C @ 0x55 on i2c_sensor)
+sensor:
+  - platform: template
+    id: battery_level
+    name: "Battery Level"
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      uint8_t reg = 0x2C;
+      uint8_t raw[2] = {0, 0};
+      auto err = id(i2c_sensor).write_readv(0x55, &reg, 1, raw, 2);
+      if (err != esphome::i2c::ERROR_OK) {
+        return NAN;
+      }
+      return static_cast<float>(static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8));
+
+  - platform: template
+    id: battery_voltage
+    name: "Battery Voltage"
+    unit_of_measurement: "mV"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      uint8_t reg = 0x08;
+      uint8_t raw[2] = {0, 0};
+      auto err = id(i2c_sensor).write_readv(0x55, &reg, 1, raw, 2);
+      if (err != esphome::i2c::ERROR_OK) {
+        return NAN;
+      }
+      return static_cast<float>(static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8));
+
+  - platform: template
+    id: battery_current
+    name: "Battery Current"
+    unit_of_measurement: "mA"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      uint8_t reg = 0x0C;
+      uint8_t raw[2] = {0, 0};
+      auto err = id(i2c_sensor).write_readv(0x55, &reg, 1, raw, 2);
+      if (err != esphome::i2c::ERROR_OK) {
+        return NAN;
+      }
+      uint16_t raw_value = static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8);
+      return static_cast<float>(static_cast<int16_t>(raw_value));
+
+# GT911 Capacitive Touchscreen (I2C @ 0x5D on i2c_touch, INT=GPIO21, RST=GPIO41)
+# Aligned to match `rotation: 180` on the ePaper display (`swap_xy: true`, `mirror_x: true`).
+touchscreen:
+  - platform: gt911
+    id: sticky_touch
+    i2c_id: i2c_touch
+    display: epaper_display
+    interrupt_pin: GPIO21
+    reset_pin: GPIO41
+    transform:
+      swap_xy: true
+      mirror_x: true
+      mirror_y: false
+    on_touch:
+      - logger.log:
+          format: "Touch x=%d y=%d (raw_x=%d raw_y=%d)"
+          args: [touch.x, touch.y, touch.x_raw, touch.y_raw]
+      - script.execute: feedback_click
+      - output.turn_on: bsp_sd_enable
+      - delay: 10ms
+      - lambda: |-
+          sticky_korean::app().handle_touch(touch.x, touch.y);
+      - component.update: epaper_display
+
+# Physical Side Buttons & MicroSD Card Detect on Seeed Studio reTerminal Sticky
+binary_sensor:
+  # MicroSD Card Detect (GPIO11, active LOW: LOW = card inserted)
+  - platform: gpio
+    id: sd_card_detect
+    name: "SD Card Detected"
+    pin:
+      number: GPIO11
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+
+  - platform: gpio
+    id: btn_ai
+    name: "Sticky AI Button (Toggle Review Mark)"
+    pin:
+      number: GPIO4
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      then:
+        - script.execute: feedback_click
+        - script.execute: action_toggle_mark
+
+  - platform: gpio
+    id: btn_up
+    name: "Sticky UP Button (Prev - Double-Click Mode)"
+    pin:
+      number: GPIO5
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_multi_click:
+      # Double-Press UP: Toggle between Normal Mode (전체 모드) and Review Mode (★ 복습)
+      - timing:
+          - ON for at most 500ms
+          - OFF for at most 350ms
+          - ON for at most 500ms
+          - OFF for at least 100ms
+        then:
+          - script.execute: feedback_click
+          - script.execute: action_toggle_mode
+      # Single-Press UP: Step backward to previous sentence in history
+      - timing:
+          - ON for at most 600ms
+          - OFF for at least 360ms
+        then:
+          - script.execute: feedback_click
+          - script.execute: action_prev_sentence
+
+  - platform: gpio
+    id: btn_down
+    name: "Sticky DOWN Button (Next - Double-Click Mark)"
+    pin:
+      number: GPIO6
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_multi_click:
+      # Double-Press DOWN: Toggle ★ Marked for Review
+      - timing:
+          - ON for at most 500ms
+          - OFF for at most 350ms
+          - ON for at most 500ms
+          - OFF for at least 100ms
+        then:
+          - script.execute: feedback_click
+          - script.execute: action_toggle_mark
+      # Single-Press DOWN: Pick and display a new random Korean sentence
+      - timing:
+          - ON for at most 600ms
+          - OFF for at least 360ms
+        then:
+          - script.execute: feedback_click
+          - script.execute: action_next_sentence
+
+# 10-Minute Automatic Random Sentence Advance (600 seconds)
+interval:
+  - interval: 10min
+    then:
+      - script.execute: action_next_sentence
+
+script:
+  - id: feedback_click
+    mode: restart
+    then:
+      - light.turn_on:
+          id: buzzer
+          brightness: 35%
+      - delay: 30ms
+      - light.turn_off: buzzer
+
+  - id: action_next_sentence
+    mode: single
+    then:
+      - output.turn_on: bsp_sd_enable
+      - delay: 10ms
+      - lambda: |-
+          sticky_korean::app().next_random();
+      - component.update: epaper_display
+
+  - id: action_prev_sentence
+    mode: single
+    then:
+      - lambda: |-
+          sticky_korean::app().prev_sentence();
+      - component.update: epaper_display
+
+  - id: action_toggle_mark
+    mode: single
+    then:
+      - output.turn_on: bsp_sd_enable
+      - delay: 20ms
+      - lambda: |-
+          sticky_korean::app().toggle_mark_review();
+      - component.update: epaper_display
+
+  - id: action_toggle_mode
+    mode: single
+    then:
+      - lambda: |-
+          sticky_korean::app().toggle_mode();
+      - component.update: epaper_display
+
+# 3.97" 800x480 Monochrome E-Ink Display (Seeed Studio reTerminal Sticky)
+display:
+  - platform: epaper_spi
+    id: epaper_display
+    model: seeed-reterminal-sticky
+    rotation: 180
+    update_interval: never
+    lambda: |-
+      sticky_korean::app().update_battery_from_i2c(id(i2c_sensor));
+      sticky_korean::app().render(it);
