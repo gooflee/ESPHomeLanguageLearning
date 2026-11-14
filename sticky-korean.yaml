@@ -207,6 +207,8 @@ touchscreen:
           format: "Touch x=%d y=%d (raw_x=%d raw_y=%d)"
           args: [touch.x, touch.y, touch.x_raw, touch.y_raw]
       - script.execute: feedback_click
+      - wait_until:
+          lambda: 'return !id(epaper_display).is_updating();'
       - output.turn_on: bsp_sd_enable
       - delay: 10ms
       - lambda: |-
@@ -298,15 +300,19 @@ binary_sensor:
           - script.execute: action_next_sentence
 
 # 10-Minute Automatic Random Sentence Advance (600 seconds)
+# NOTE: startup_delay: 10min prevents ESPHome's PollingComponent scheduler from
+# firing an extra random poll 0..5s after boot/deep-sleep wakeup (which caused
+# a second card to be selected right after on_boot and collided with epaper_spi).
 interval:
   - interval: 10min
+    startup_delay: 10min
     then:
       - script.execute: action_next_sentence
 
 deep_sleep:
   id: ds
-  run_duration: 30s        # Stays awake for 30 seconds after waking up/interacting
-  sleep_duration: 30min    # Optional automatic wake timer if no button is pressed
+  run_duration: 1min        # Stays awake for 1 minute after waking up/interacting
+  sleep_duration: 10min    # Automatic wake timer if no button is pressed
   esp32_ext1_wakeup:
     mode: ANY_LOW          # Wake up when any of the selected buttons are pressed (LOW)
     pins:
@@ -330,6 +336,8 @@ script:
   - id: action_next_sentence
     mode: single
     then:
+      - wait_until:
+          lambda: 'return !id(epaper_display).is_updating();'
       - output.turn_on: bsp_sd_enable
       - delay: 10ms
       - lambda: |-
@@ -339,6 +347,8 @@ script:
   - id: action_prev_sentence
     mode: single
     then:
+      - wait_until:
+          lambda: 'return !id(epaper_display).is_updating();'
       - lambda: |-
           sticky_korean::app().prev_sentence();
       - component.update: epaper_display
@@ -346,15 +356,19 @@ script:
   - id: action_toggle_mark
     mode: single
     then:
+      - wait_until:
+          lambda: 'return !id(epaper_display).is_updating();'
       - output.turn_on: bsp_sd_enable
       - delay: 20ms
       - lambda: |-
           sticky_korean::app().toggle_mark_review();
       - component.update: epaper_display
-
+      
   - id: action_toggle_mode
     mode: single
     then:
+      - wait_until:
+          lambda: 'return !id(epaper_display).is_updating();'
       - lambda: |-
           sticky_korean::app().toggle_mode();
       - component.update: epaper_display

@@ -25,6 +25,7 @@ namespace sticky_korean {
 
 static const size_t MAX_HISTORY = 30;
 static const char *const TAG = "sticky_korean";
+uint32_t last_sentence_change_ms = 0;
 
 class StickySentenceApp {
  public:
@@ -255,6 +256,14 @@ class StickySentenceApp {
   }
 
   void next_random() {
+    // Protect against updating the sentence too frequently (e.g., accidental double-tap).
+    // Allow last_sentence_change_ms == 0 so the initial boot call (when millis() < 500ms) is never skipped.
+    uint32_t now_ms = esphome::millis();
+    if (last_sentence_change_ms != 0 && (now_ms - last_sentence_change_ms < 500)) {
+      return;
+    }
+    last_sentence_change_ms = now_ms;
+
     // If SD wasn't inserted at boot, try checking again when advancing
     if (!using_sd_card) {
       load_decks_from_sd_or_fallback();
