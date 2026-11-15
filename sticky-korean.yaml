@@ -311,7 +311,7 @@ interval:
 
 deep_sleep:
   id: ds
-  run_duration: 1min        # Stays awake for 1 minute after waking up/interacting
+  run_duration: 30s        # Stays awake for 30 seconds after waking up/interacting
   sleep_duration: 10min    # Automatic wake timer if no button is pressed
   esp32_ext1_wakeup:
     mode: ANY_LOW          # Wake up when any of the selected buttons are pressed (LOW)
