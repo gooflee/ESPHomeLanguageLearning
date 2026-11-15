@@ -11,7 +11,6 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DataFile = Join-Path $ProjectRoot "data\Korean_sentences.txt"
 $IncludeDir = Join-Path $ProjectRoot "include"
 $HeaderOut = Join-Path $IncludeDir "default_sentences.h"
-$GlyphsOut = Join-Path $IncludeDir "korean_glyphs.txt"
 $YamlFile = Join-Path $ProjectRoot "sticky-korean.yaml"
 
 if (-not (Test-Path $IncludeDir)) {
@@ -61,19 +60,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($HeaderOut, $sb.ToString(), $utf8NoBom)
 Write-Host "==> Generated fallback C++ header: $HeaderOut" -ForegroundColor Green
 
-# 2. Extract unique characters into include/korean_glyphs.txt (useful if a TTF font is ever used)
-$asciiUi = "[]()/0123456789.,?!-:~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-$allText = ($Sentences -join "") + $asciiUi
-$uniqueChars = ($allText.ToCharArray() | Where-Object { [int]$_ -ge 32 } | Sort-Object -Unique) -join ""
-[System.IO.File]::WriteAllText($GlyphsOut, $uniqueChars, $utf8NoBom)
-Write-Host "==> Extracted $($uniqueChars.Length) unique glyphs to: $GlyphsOut" -ForegroundColor Green
-
-if ($GenerateHeadersOnly) {
-    Write-Host "==> Header generation complete." -ForegroundColor Cyan
-    exit 0
-}
-
-# 3. Locate ESPHome CLI (prefer local .venv\Scripts\esphome.exe if present)
+# 2. Locate ESPHome CLI (prefer local .venv\Scripts\esphome.exe if present)
 $VenvEspHome = Join-Path $ProjectRoot ".venv\Scripts\esphome.exe"
 if (Test-Path $VenvEspHome) {
     $esphomeExe = $VenvEspHome
